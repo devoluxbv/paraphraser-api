@@ -17,11 +17,12 @@ class ParaphraseRequest(BaseModel):
     text: str
     lex_diversity: Optional[int] = 80
     order_diversity: Optional[int] = 0
-    prefix: Optional[str] = ""  # Default prefix is now empty
+    prefix: Optional[str] = ""  # Default prefix is empty
     do_sample: Optional[bool] = True
     top_p: Optional[float] = 0.75
     top_k: Optional[int] = None
     max_length: Optional[int] = 512
+    min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
 
 class DipperParaphraser(object):
@@ -71,6 +72,19 @@ class DipperParaphraser(object):
 
         return output_text.strip()
 
+    def regenerate_if_too_short(self, input_text, output_text, min_ratio=0.5, **kwargs):
+        """Regenerate text if output is too short compared to the input text."""
+        input_len = len(input_text)
+        output_len = len(output_text)
+
+        # If the output text is shorter than the allowed minimum, regenerate
+        while output_len < min_ratio * input_len:
+            print("Regenerating because the output is too short...")
+            output_text = self.paraphrase(input_text, **kwargs)
+            output_len = len(output_text)
+
+        return output_text
+
 
 # Initialize the paraphraser
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl")
@@ -78,9 +92,24 @@ dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl")
 @app.post("/paraphrase")
 def paraphrase_text(request: ParaphraseRequest):
     start_time = time.time()
-    
+
+    # Generate the initial paraphrase
     output = dp.paraphrase(
         request.text,
+        lex_diversity=request.lex_diversity,
+        order_diversity=request.order_diversity,
+        prefix=request.prefix,
+        do_sample=request.do_sample,
+        top_p=request.top_p,
+        top_k=request.top_k,
+        max_length=request.max_length
+    )
+
+    # Regenerate if the output is too short
+    output = dp.regenerate_if_too_short(
+        input_text=request.text,
+        output_text=output,
+        min_ratio=request.min_ratio,  # Use the min_ratio from the API request
         lex_diversity=request.lex_diversity,
         order_diversity=request.order_diversity,
         prefix=request.prefix,
@@ -92,10 +121,13 @@ def paraphrase_text(request: ParaphraseRequest):
     
     processing_time = time.time() - start_time
     
+    # Return the paraphrased text along with length information
     return {
         "paraphrased_text": output,
+        "input_length": len(request.text),
+        "output_length": len(output),
         "processing_time_seconds": processing_time
     }
 
 # To run the FastAPI server, use this command in terminal:
-# uvicorn your_script_name:app --host 0.0.0.0 --port 5000
+# uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000
