@@ -28,7 +28,7 @@ class ParaphraseRequest(BaseModel):
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl')
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large')
         
         # Load model with FP16 precision
         self.model = T5ForConditionalGeneration.from_pretrained(
