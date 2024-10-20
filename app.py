@@ -1,5 +1,6 @@
 import time
 import torch
+import deepspeed
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Download both punkt and punkt_tab
+# Download the 'punkt' tokenizer
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -24,16 +25,30 @@ class ParaphraseRequest(BaseModel):
     max_length: Optional[int] = 512
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
-
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", verbose=True):
         time1 = time.time()
         self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl')
-        self.model = T5ForConditionalGeneration.from_pretrained(model)
+        
+        # Load model with FP16 precision
+        self.model = T5ForConditionalGeneration.from_pretrained(
+            model,
+            torch_dtype=torch.float16  # Set model to FP16
+        )
+        
         if verbose:
-            print(f"{model} model loaded in {time.time() - time1}")
-        self.model.cuda()
-        self.model.eval()
+            print(f"{model} model loaded in {time.time() - time1} seconds.")
+        
+        # Initialize DeepSpeed inference engine
+        self.model = deepspeed.init_inference(
+            self.model,
+            mp_size=1,  # Adjust if using model parallelism
+            dtype=torch.float16,  # Use FP16 precision
+            replace_method='auto',
+            replace_with_kernel_inject=True
+        )
+        
+        self.model.module.eval()  # Set to evaluation mode
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
         """Paraphrase a text using the DIPPER model."""
@@ -62,8 +77,9 @@ class DipperParaphraser(object):
                 final_input = self.tokenizer([final_input_text], return_tensors="pt")
                 final_input = {k: v.cuda() for k, v in final_input.items()}
 
-                with torch.inference_mode():
-                    outputs = self.model.generate(**final_input, **kwargs)
+                with torch.cuda.amp.autocast():
+                    with torch.inference_mode():
+                        outputs = self.model.module.generate(**final_input, **kwargs)
                 outputs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 prefix += " " + outputs[0]
                 paragraph_output += " " + outputs[0]
@@ -84,7 +100,6 @@ class DipperParaphraser(object):
             output_len = len(output_text)
 
         return output_text
-
 
 # Initialize the paraphraser
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl")
@@ -130,4 +145,4 @@ def paraphrase_text(request: ParaphraseRequest):
     }
 
 # To run the FastAPI server, use this command in terminal:
-# uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000
+# uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000 
