@@ -8,7 +8,6 @@ from nltk.tokenize import sent_tokenize
 from typing import Optional
 
 nltk.download('punkt')
-nltk.download('punkt_tab')
 
 app = FastAPI()
 
@@ -24,7 +23,7 @@ class ParaphraseRequest(BaseModel):
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
 
-class DipperParaphraser(object):
+class DipperParaphraser:
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
         self.model_name = model
         self.cache_dir = cache_dir
@@ -32,7 +31,7 @@ class DipperParaphraser(object):
         self.tokenizer = None
         self.verbose = verbose
         self.request_count = 0
-        self.max_requests = 10  # Unload after 30 requests
+        self.max_requests = 5  # Unload after 5 requests to avoid memory issues
         self.load_model()
 
     def load_model(self):
@@ -48,11 +47,14 @@ class DipperParaphraser(object):
 
     def unload_model(self):
         """Unload the model and tokenizer from memory to free up resources."""
+        del self.model
+        del self.tokenizer
         self.model = None
         self.tokenizer = None
         torch.cuda.empty_cache()  # Free GPU memory
+        torch.cuda.reset_peak_memory_stats()  # Reset memory statistics
         if self.verbose:
-            print(f"Model and tokenizer unloaded from memory.")
+            print("Model and tokenizer unloaded from memory.")
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
         """Paraphrase a text using the DIPPER model."""
@@ -85,8 +87,10 @@ class DipperParaphraser(object):
                 final_input = self.tokenizer([final_input_text], return_tensors="pt")
                 final_input = {k: v.cuda() for k, v in final_input.items()}
 
-                with torch.inference_mode():
+                # Ensure no computation graph is created
+                with torch.no_grad():
                     outputs = self.model.generate(**final_input, **kwargs)
+
                 outputs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 prefix += " " + outputs[0]
                 paragraph_output += " " + outputs[0]
@@ -112,7 +116,7 @@ class DipperParaphraser(object):
         """Process a paraphrase request and track the number of requests."""
         self.request_count += 1
         
-        # Unload model after 30 requests
+        # Unload model after every 5 requests
         if self.request_count >= self.max_requests:
             self.unload_model()
             self.request_count = 0  # Reset the request counter
@@ -158,6 +162,8 @@ def paraphrase_text(request: ParaphraseRequest):
     # Return the paraphrased text along with length information
     return {
         "paraphrased_text": output,
+        "input_length": len(request.text),
+        "output_length": len(output),
         "processing_time_seconds": processing_time
     }
 
