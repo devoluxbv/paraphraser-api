@@ -7,7 +7,6 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Download both punkt and punkt_tab
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -27,22 +26,40 @@ class ParaphraseRequest(BaseModel):
 
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
+        self.model_name = model
+        self.cache_dir = cache_dir
+        self.model = None
+        self.tokenizer = None
+        self.verbose = verbose
+        self.request_count = 0
+        self.max_requests = 30  # Unload after 30 requests
+        self.load_model()
+
+    def load_model(self):
+        """Load the model and tokenizer into memory."""
         time1 = time.time()
-        
-        # Download and load the tokenizer to the specified cache_dir folder
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl', cache_dir=cache_dir)
-        
-        # Download and load the model to the specified cache_dir folder
-        self.model = T5ForConditionalGeneration.from_pretrained(model, cache_dir=cache_dir)
-        
-        if verbose:
-            print(f"{model} model loaded in {time.time() - time1} seconds.")
-        
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl', cache_dir=self.cache_dir)
+        self.model = T5ForConditionalGeneration.from_pretrained(self.model_name, cache_dir=self.cache_dir)
         self.model.cuda()
         self.model.eval()
 
+        if self.verbose:
+            print(f"{self.model_name} model loaded in {time.time() - time1:.2f} seconds.")
+
+    def unload_model(self):
+        """Unload the model and tokenizer from memory to free up resources."""
+        self.model = None
+        self.tokenizer = None
+        torch.cuda.empty_cache()  # Free GPU memory
+        if self.verbose:
+            print(f"Model and tokenizer unloaded from memory.")
+
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
         """Paraphrase a text using the DIPPER model."""
+        # Ensure the model is loaded if it was previously unloaded
+        if self.model is None or self.tokenizer is None:
+            self.load_model()
+
         assert lex_diversity in [0, 20, 40, 60, 80, 100], "Lexical diversity must be one of 0, 20, 40, 60, 80, 100."
         assert order_diversity in [0, 20, 40, 60, 80, 100], "Order diversity must be one of 0, 20, 40, 60, 80, 100."
 
@@ -91,6 +108,17 @@ class DipperParaphraser(object):
 
         return output_text
 
+    def process_request(self, *args, **kwargs):
+        """Process a paraphrase request and track the number of requests."""
+        self.request_count += 1
+        
+        # Unload model after 30 requests
+        if self.request_count >= self.max_requests:
+            self.unload_model()
+            self.request_count = 0  # Reset the request counter
+
+        return self.paraphrase(*args, **kwargs)
+
 
 # Initialize the paraphraser with model cache folder
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
@@ -100,7 +128,7 @@ def paraphrase_text(request: ParaphraseRequest):
     start_time = time.time()
 
     # Generate the initial paraphrase
-    output = dp.paraphrase(
+    output = dp.process_request(
         request.text,
         lex_diversity=request.lex_diversity,
         order_diversity=request.order_diversity,
@@ -130,8 +158,6 @@ def paraphrase_text(request: ParaphraseRequest):
     # Return the paraphrased text along with length information
     return {
         "paraphrased_text": output,
-        "input_length": len(request.text),
-        "output_length": len(output),
         "processing_time_seconds": processing_time
     }
 
