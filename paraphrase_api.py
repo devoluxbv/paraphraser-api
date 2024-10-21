@@ -32,7 +32,7 @@ class DipperParaphraser(object):
         self.tokenizer = None
         self.verbose = verbose
         self.request_count = 0
-        self.max_requests = 30  # Unload after 30 requests
+        self.max_requests = 10  # Unload after 30 requests
         self.load_model()
 
     def load_model(self):
