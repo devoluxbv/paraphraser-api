@@ -29,9 +29,9 @@ class ParaphraseRequest(BaseModel):
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
 class DipperParaphraser(object):
-    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
+    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='/models', verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='./models')
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='/models')
         self.model = T5ForConditionalGeneration.from_pretrained(model)
         if verbose:
             print(f"{model} model loaded in {time.time() - time1}")
@@ -95,7 +95,7 @@ class DipperParaphraser(object):
         return output_text
 
 # Initialize the paraphraser
-dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
+dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='/models')
 
 @app.post("/paraphrase")
 def paraphrase_text(request: ParaphraseRequest):
