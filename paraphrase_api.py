@@ -11,7 +11,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Install required NLTK data
+# Download NLTK data
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -31,20 +31,11 @@ class ParaphraseRequest(BaseModel):
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir=cache_dir)
-
-        # Load the model with FP16 precision and enable offloading
-        self.model = T5ForConditionalGeneration.from_pretrained(
-            model,
-            cache_dir=cache_dir,
-            torch_dtype=torch.float16,
-            device_map='auto',
-            offload_folder='offload',        # Folder to offload weights to CPU
-            offload_state_dict=True          # Offload state dict to CPU
-        )
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='./models')
+        self.model = T5ForConditionalGeneration.from_pretrained(model)
         if verbose:
-            print(f"{model} model loaded in {time.time() - time1} seconds")
-        # No need to move the model to CUDA; device_map='auto' handles that
+            print(f"{model} model loaded in {time.time() - time1}")
+        self.model.cuda()
         self.model.eval()
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
@@ -72,9 +63,7 @@ class DipperParaphraser(object):
                 final_input_text += f" <sent> {curr_sent_window} </sent>"
 
                 final_input = self.tokenizer([final_input_text], return_tensors="pt")
-
-                # Move tensors to the correct device
-                final_input = final_input.to(self.model.device)
+                final_input = {k: v.cuda() for k, v in final_input.items()}
 
                 with torch.inference_mode():
                     outputs = self.model.generate(**final_input, **kwargs)
@@ -100,7 +89,7 @@ class DipperParaphraser(object):
             output_text = self.paraphrase(input_text, **kwargs)
             output_len = len(output_text)
 
-            # Clear CUDA cache after regeneration
+            # Clear CUDA cache to free up memory
             torch.cuda.empty_cache()
 
         return output_text
@@ -146,5 +135,5 @@ def paraphrase_text(request: ParaphraseRequest):
         "processing_time_seconds": processing_time
     }
 
-# To run the FastAPI server, use the following command in the terminal:
+# To run the FastAPI server, use this command in terminal:
 # uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000
