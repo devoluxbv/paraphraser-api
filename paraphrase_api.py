@@ -1,7 +1,3 @@
-import os
-# Set PyTorch CUDA Allocation Configuration
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 import time
 import torch
 from transformers import T5Tokenizer, T5ForConditionalGeneration
@@ -11,7 +7,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Download NLTK data
+# Download both punkt and punkt_tab
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -28,10 +24,11 @@ class ParaphraseRequest(BaseModel):
     max_length: Optional[int] = 512
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
+
 class DipperParaphraser(object):
-    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='/models', verbose=True):
+    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='/models')
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='./models')
         self.model = T5ForConditionalGeneration.from_pretrained(model)
         if verbose:
             print(f"{model} model loaded in {time.time() - time1}")
@@ -71,9 +68,6 @@ class DipperParaphraser(object):
                 prefix += " " + outputs[0]
                 paragraph_output += " " + outputs[0]
 
-                # Clear CUDA cache to free up memory
-                torch.cuda.empty_cache()
-
             output_text += paragraph_output.strip() + "\n\n"  # Add paragraph breaks between outputs
 
         return output_text.strip()
@@ -89,13 +83,11 @@ class DipperParaphraser(object):
             output_text = self.paraphrase(input_text, **kwargs)
             output_len = len(output_text)
 
-            # Clear CUDA cache to free up memory
-            torch.cuda.empty_cache()
-
         return output_text
 
+
 # Initialize the paraphraser
-dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='/models')
+dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
 
 @app.post("/paraphrase")
 def paraphrase_text(request: ParaphraseRequest):
@@ -129,7 +121,7 @@ def paraphrase_text(request: ParaphraseRequest):
     
     processing_time = time.time() - start_time
     
-    # Return the paraphrased text along with processing time
+    # Return the paraphrased text along with length information
     return {
         "paraphrased_text": output,
         "processing_time_seconds": processing_time
