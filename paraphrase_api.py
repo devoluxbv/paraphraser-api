@@ -1,18 +1,16 @@
 import time
 import torch
+import deepspeed
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from fastapi import FastAPI
 from pydantic import BaseModel
 import nltk
 from nltk.tokenize import sent_tokenize
-import gc
-import os
 from typing import Optional
 
-# Set PYTORCH_CUDA_ALLOC_CONF for memory management
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-
+# Download the 'punkt' tokenizer
 nltk.download('punkt')
+nltk.download('punkt_tab')
 
 app = FastAPI()
 
@@ -27,52 +25,36 @@ class ParaphraseRequest(BaseModel):
     max_length: Optional[int] = 512
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
-
-class DipperParaphraser:
+class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
-        self.model_name = model
-        self.cache_dir = cache_dir
-        self.model = None
-        self.tokenizer = None
-        self.verbose = verbose
-        self.request_count = 0
-        self.max_requests = 1  # Unload after every request
-        self.ensure_model_loaded()
-
-    def ensure_model_loaded(self):
-        """Ensure the model and tokenizer are loaded."""
-        if self.model is None or self.tokenizer is None:
-            self.load_model()
-
-    def load_model(self):
-        """Load the model and tokenizer into memory."""
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xl', cache_dir=self.cache_dir)
-        self.model = T5ForConditionalGeneration.from_pretrained(self.model_name, cache_dir=self.cache_dir)
-        self.model.cuda()
-        self.model.eval()
-
-        if self.verbose:
-            print(f"{self.model_name} model loaded in {time.time() - time1:.2f} seconds.")
-
-    def unload_model(self):
-        """Unload the model and tokenizer from memory to free up resources."""
-        if self.model is not None:
-            self.model.cpu()  # Move model to CPU
-            del self.model
-            del self.tokenizer
-            self.model = None
-            self.tokenizer = None
-            gc.collect()  # Force garbage collection
-            torch.cuda.empty_cache()  # Free GPU memory
-            torch.cuda.reset_peak_memory_stats()  # Reset memory statistics
-            if self.verbose:
-                print("Model and tokenizer unloaded from memory.")
+        
+        # Download and load the tokenizer to the specified cache_dir folder
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir=='./models')
+        
+        # Download and load the model with FP16 precision to the specified cache_dir folder
+        self.model = T5ForConditionalGeneration.from_pretrained(
+            model,
+            torch_dtype=torch.float16,  # Set model to FP16
+            cache_dir=cache_dir
+        )
+        
+        if verbose:
+            print(f"{model} model loaded in {time.time() - time1} seconds.")
+        
+        # Initialize DeepSpeed inference engine
+        self.model = deepspeed.init_inference(
+            self.model,
+            mp_size=1,  # Adjust if using model parallelism
+            dtype=torch.float16,  # Use FP16 precision
+            replace_method='auto',
+            replace_with_kernel_inject=True
+        )
+        
+        self.model.module.eval()  # Set to evaluation mode
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
         """Paraphrase a text using the DIPPER model."""
-        self.ensure_model_loaded()  # Ensure the model is loaded before paraphrasing
-
         assert lex_diversity in [0, 20, 40, 60, 80, 100], "Lexical diversity must be one of 0, 20, 40, 60, 80, 100."
         assert order_diversity in [0, 20, 40, 60, 80, 100], "Order diversity must be one of 0, 20, 40, 60, 80, 100."
 
@@ -98,10 +80,9 @@ class DipperParaphraser:
                 final_input = self.tokenizer([final_input_text], return_tensors="pt")
                 final_input = {k: v.cuda() for k, v in final_input.items()}
 
-                # Ensure no computation graph is created
-                with torch.no_grad():
-                    outputs = self.model.generate(**final_input, **kwargs)
-
+                with torch.cuda.amp.autocast():
+                    with torch.inference_mode():
+                        outputs = self.model.module.generate(**final_input, **kwargs)
                 outputs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 prefix += " " + outputs[0]
                 paragraph_output += " " + outputs[0]
@@ -123,18 +104,6 @@ class DipperParaphraser:
 
         return output_text
 
-    def process_request(self, *args, **kwargs):
-        """Process a paraphrase request and track the number of requests."""
-        self.request_count += 1
-        
-        # Unload model after every 1 request to free up memory
-        if self.request_count >= self.max_requests:
-            self.unload_model()
-            self.request_count = 0  # Reset the request counter
-
-        return self.paraphrase(*args, **kwargs)
-
-
 # Initialize the paraphraser with model cache folder
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
 
@@ -143,7 +112,7 @@ def paraphrase_text(request: ParaphraseRequest):
     start_time = time.time()
 
     # Generate the initial paraphrase
-    output = dp.process_request(
+    output = dp.paraphrase(
         request.text,
         lex_diversity=request.lex_diversity,
         order_diversity=request.order_diversity,
@@ -173,10 +142,8 @@ def paraphrase_text(request: ParaphraseRequest):
     # Return the paraphrased text along with length information
     return {
         "paraphrased_text": output,
-        "input_length": len(request.text),
-        "output_length": len(output),
         "processing_time_seconds": processing_time
     }
 
 # To run the FastAPI server, use this command in terminal:
-# uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000
+# uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000 
