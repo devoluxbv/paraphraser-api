@@ -26,12 +26,18 @@ class ParaphraseRequest(BaseModel):
 
 
 class DipperParaphraser(object):
-    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", verbose=True):
+    def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl')
-        self.model = T5ForConditionalGeneration.from_pretrained(model)
+        
+        # Download and load the tokenizer to the specified cache_dir folder
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl', cache_dir=cache_dir)
+        
+        # Download and load the model to the specified cache_dir folder
+        self.model = T5ForConditionalGeneration.from_pretrained(model, cache_dir=cache_dir)
+        
         if verbose:
-            print(f"{model} model loaded in {time.time() - time1}")
+            print(f"{model} model loaded in {time.time() - time1} seconds.")
+        
         self.model.cuda()
         self.model.eval()
 
@@ -86,8 +92,8 @@ class DipperParaphraser(object):
         return output_text
 
 
-# Initialize the paraphraser
-dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl")
+# Initialize the paraphraser with model cache folder
+dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
 
 @app.post("/paraphrase")
 def paraphrase_text(request: ParaphraseRequest):
