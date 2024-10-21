@@ -3,3 +3,5 @@ fastapi
 uvicorn
 nltk
 sentencepiece
+torch
+pydantic
