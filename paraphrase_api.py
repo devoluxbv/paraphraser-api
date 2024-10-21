@@ -33,12 +33,14 @@ class DipperParaphraser(object):
         time1 = time.time()
         self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir=cache_dir)
 
-        # Load the model with 8-bit precision
+        # Load the model with FP16 precision and enable offloading
         self.model = T5ForConditionalGeneration.from_pretrained(
             model,
             cache_dir=cache_dir,
+            torch_dtype=torch.float16,
             device_map='auto',
-            load_in_8bit=True
+            offload_folder='offload',        # Folder to offload weights to CPU
+            offload_state_dict=True          # Offload state dict to CPU
         )
         if verbose:
             print(f"{model} model loaded in {time.time() - time1} seconds")
