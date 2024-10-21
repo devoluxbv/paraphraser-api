@@ -47,7 +47,7 @@ class DipperParaphraser:
     def load_model(self):
         """Load the model and tokenizer into memory."""
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl', cache_dir=self.cache_dir)
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xl', cache_dir=self.cache_dir)
         self.model = T5ForConditionalGeneration.from_pretrained(self.model_name, cache_dir=self.cache_dir)
         self.model.cuda()
         self.model.eval()
