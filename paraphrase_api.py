@@ -5,7 +5,12 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import nltk
 from nltk.tokenize import sent_tokenize
+import gc
+import os
 from typing import Optional
+
+# Set PYTORCH_CUDA_ALLOC_CONF for memory management
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 nltk.download('punkt')
 
@@ -31,8 +36,13 @@ class DipperParaphraser:
         self.tokenizer = None
         self.verbose = verbose
         self.request_count = 0
-        self.max_requests = 5  # Unload after 5 requests to avoid memory issues
-        self.load_model()
+        self.max_requests = 1  # Unload after every request
+        self.ensure_model_loaded()
+
+    def ensure_model_loaded(self):
+        """Ensure the model and tokenizer are loaded."""
+        if self.model is None or self.tokenizer is None:
+            self.load_model()
 
     def load_model(self):
         """Load the model and tokenizer into memory."""
@@ -47,20 +57,21 @@ class DipperParaphraser:
 
     def unload_model(self):
         """Unload the model and tokenizer from memory to free up resources."""
-        del self.model
-        del self.tokenizer
-        self.model = None
-        self.tokenizer = None
-        torch.cuda.empty_cache()  # Free GPU memory
-        torch.cuda.reset_peak_memory_stats()  # Reset memory statistics
-        if self.verbose:
-            print("Model and tokenizer unloaded from memory.")
+        if self.model is not None:
+            self.model.cpu()  # Move model to CPU
+            del self.model
+            del self.tokenizer
+            self.model = None
+            self.tokenizer = None
+            gc.collect()  # Force garbage collection
+            torch.cuda.empty_cache()  # Free GPU memory
+            torch.cuda.reset_peak_memory_stats()  # Reset memory statistics
+            if self.verbose:
+                print("Model and tokenizer unloaded from memory.")
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
         """Paraphrase a text using the DIPPER model."""
-        # Ensure the model is loaded if it was previously unloaded
-        if self.model is None or self.tokenizer is None:
-            self.load_model()
+        self.ensure_model_loaded()  # Ensure the model is loaded before paraphrasing
 
         assert lex_diversity in [0, 20, 40, 60, 80, 100], "Lexical diversity must be one of 0, 20, 40, 60, 80, 100."
         assert order_diversity in [0, 20, 40, 60, 80, 100], "Order diversity must be one of 0, 20, 40, 60, 80, 100."
@@ -116,7 +127,7 @@ class DipperParaphraser:
         """Process a paraphrase request and track the number of requests."""
         self.request_count += 1
         
-        # Unload model after every 5 requests
+        # Unload model after every 1 request to free up memory
         if self.request_count >= self.max_requests:
             self.unload_model()
             self.request_count = 0  # Reset the request counter
