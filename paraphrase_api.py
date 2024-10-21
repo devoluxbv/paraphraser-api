@@ -1,3 +1,7 @@
+import os
+# Set PyTorch CUDA Allocation Configuration
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import time
 import torch
 from transformers import T5Tokenizer, T5ForConditionalGeneration
@@ -7,7 +11,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Download both punkt and punkt_tab
+# Install required NLTK data
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -24,15 +28,21 @@ class ParaphraseRequest(BaseModel):
     max_length: Optional[int] = 512
     min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
 
-
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
         time1 = time.time()
-        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir='./models')
-        self.model = T5ForConditionalGeneration.from_pretrained(model)
+        self.tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-large', cache_dir=cache_dir)
+
+        # Load the model with 8-bit precision
+        self.model = T5ForConditionalGeneration.from_pretrained(
+            model,
+            cache_dir=cache_dir,
+            device_map='auto',
+            load_in_8bit=True
+        )
         if verbose:
-            print(f"{model} model loaded in {time.time() - time1}")
-        self.model.cuda()
+            print(f"{model} model loaded in {time.time() - time1} seconds")
+        # No need to move the model to CUDA; device_map='auto' handles that
         self.model.eval()
 
     def paraphrase(self, input_text, lex_diversity, order_diversity, prefix="", sent_interval=3, **kwargs):
@@ -60,13 +70,18 @@ class DipperParaphraser(object):
                 final_input_text += f" <sent> {curr_sent_window} </sent>"
 
                 final_input = self.tokenizer([final_input_text], return_tensors="pt")
-                final_input = {k: v.cuda() for k, v in final_input.items()}
+
+                # Move tensors to the correct device
+                final_input = final_input.to(self.model.device)
 
                 with torch.inference_mode():
                     outputs = self.model.generate(**final_input, **kwargs)
                 outputs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 prefix += " " + outputs[0]
                 paragraph_output += " " + outputs[0]
+
+                # Clear CUDA cache to free up memory
+                torch.cuda.empty_cache()
 
             output_text += paragraph_output.strip() + "\n\n"  # Add paragraph breaks between outputs
 
@@ -83,8 +98,10 @@ class DipperParaphraser(object):
             output_text = self.paraphrase(input_text, **kwargs)
             output_len = len(output_text)
 
-        return output_text
+            # Clear CUDA cache after regeneration
+            torch.cuda.empty_cache()
 
+        return output_text
 
 # Initialize the paraphraser
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
@@ -121,11 +138,11 @@ def paraphrase_text(request: ParaphraseRequest):
     
     processing_time = time.time() - start_time
     
-    # Return the paraphrased text along with length information
+    # Return the paraphrased text along with processing time
     return {
         "paraphrased_text": output,
         "processing_time_seconds": processing_time
     }
 
-# To run the FastAPI server, use this command in terminal:
+# To run the FastAPI server, use the following command in the terminal:
 # uvicorn paraphrase_api:app --host 0.0.0.0 --port 5000
