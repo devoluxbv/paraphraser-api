@@ -11,7 +11,6 @@ import nltk
 from nltk.tokenize import sent_tokenize
 from typing import Optional
 
-# Download NLTK data
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
@@ -26,7 +25,7 @@ class ParaphraseRequest(BaseModel):
     top_p: Optional[float] = 0.75
     top_k: Optional[int] = None
     max_length: Optional[int] = 512
-    min_ratio: Optional[float] = 0.5  # Default minimum ratio is 0.5
+    min_ratio: Optional[float] = 0.5
 
 class DipperParaphraser(object):
     def __init__(self, model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models', verbose=True):
@@ -46,7 +45,6 @@ class DipperParaphraser(object):
         lex_code = int(100 - lex_diversity)
         order_code = int(100 - order_diversity)
 
-        # Handle both single and multiple paragraphs
         paragraphs = [input_text] if '\n' not in input_text else [p.strip() for p in input_text.split('\n') if p.strip()]
         prefix = " ".join(prefix.replace("\n", " ").split())
         output_text = ""
@@ -94,14 +92,12 @@ class DipperParaphraser(object):
 
         return output_text
 
-# Initialize the paraphraser
 dp = DipperParaphraser(model="kalpeshk2011/dipper-paraphraser-xxl", cache_dir='./models')
 
 @app.post("/paraphrase")
 def paraphrase_text(request: ParaphraseRequest):
     start_time = time.time()
 
-    # Generate the initial paraphrase
     output = dp.paraphrase(
         request.text,
         lex_diversity=request.lex_diversity,
@@ -113,11 +109,10 @@ def paraphrase_text(request: ParaphraseRequest):
         max_length=request.max_length
     )
 
-    # Regenerate if the output is too short
     output = dp.regenerate_if_too_short(
         input_text=request.text,
         output_text=output,
-        min_ratio=request.min_ratio,  # Use the min_ratio from the API request
+        min_ratio=request.min_ratio,
         lex_diversity=request.lex_diversity,
         order_diversity=request.order_diversity,
         prefix=request.prefix,
@@ -129,7 +124,6 @@ def paraphrase_text(request: ParaphraseRequest):
     
     processing_time = time.time() - start_time
     
-    # Return the paraphrased text along with processing time
     return {
         "paraphrased_text": output,
         "processing_time_seconds": processing_time
